@@ -14,6 +14,8 @@
 
 #define ATOMIC_INIT(i)	{ (i) }
 
+#define cpu_relaxed_read_atomic(v)	atomic_read(v)
+
 /**
  * atomic_read - read atomic variable
  * @v: pointer of type atomic_t

@@ -4,6 +4,7 @@
  *  Copyright(C) 2005-2006, Thomas Gleixner <tglx@linutronix.de>
  *  Copyright(C) 2005-2007, Red Hat, Inc., Ingo Molnar
  *  Copyright(C) 2006-2007  Timesys Corp., Thomas Gleixner
+ *  Copyright (c) 2014, NVIDIA CORPORATION.  All rights reserved.
  *
  *  High-resolution kernel timers
  *
@@ -52,6 +53,8 @@
 #include <asm/uaccess.h>
 
 #include <trace/events/timer.h>
+
+#include <asm/relaxed.h>
 
 /*
  * The timer bases:
@@ -230,7 +233,7 @@ again:
 		 * completed. There is no conflict as we hold the lock until
 		 * the timer is enqueued.
 		 */
-		if (unlikely(hrtimer_callback_running(timer)))
+		if (unlikely(hrtimer_callback_running_relaxed(timer)))
 			return base;
 
 		/* See the comment in lock_timer_base() */
@@ -632,7 +635,7 @@ static int hrtimer_reprogram(struct hrtimer *timer,
 	 * reprogramming is handled either by the softirq, which called the
 	 * callback or at the end of the hrtimer_interrupt.
 	 */
-	if (hrtimer_callback_running(timer))
+	if (hrtimer_callback_running_relaxed(timer))
 		return 0;
 
 	/*
@@ -1106,7 +1109,7 @@ int hrtimer_try_to_cancel(struct hrtimer *timer)
 
 	base = lock_hrtimer_base(timer, &flags);
 
-	if (!hrtimer_callback_running(timer))
+	if (!hrtimer_callback_running_relaxed(timer))
 		ret = remove_hrtimer(timer, base);
 
 	unlock_hrtimer_base(timer, &flags);
@@ -1115,6 +1118,23 @@ int hrtimer_try_to_cancel(struct hrtimer *timer)
 
 }
 EXPORT_SYMBOL_GPL(hrtimer_try_to_cancel);
+
+int hrtimer_try_to_cancel_relaxed(struct hrtimer *timer)
+{
+	struct hrtimer_clock_base *base;
+	unsigned long flags;
+	int ret = -1;
+
+	base = lock_hrtimer_base(timer, &flags);
+
+	if (!hrtimer_callback_running_relaxed(timer))
+		ret = remove_hrtimer(timer, base);
+
+	unlock_hrtimer_base(timer, &flags);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(hrtimer_try_to_cancel_relaxed);
 
 /**
  * hrtimer_cancel - cancel a timer and wait for the handler to finish.
@@ -1127,11 +1147,18 @@ EXPORT_SYMBOL_GPL(hrtimer_try_to_cancel);
 int hrtimer_cancel(struct hrtimer *timer)
 {
 	for (;;) {
-		int ret = hrtimer_try_to_cancel(timer);
+		int ret = hrtimer_try_to_cancel_relaxed(timer);
 
 		if (ret >= 0)
 			return ret;
-		cpu_relax();
+
+		/*
+		 * The corresponding ldax call for cpu_read_relax() is
+		 * present in hrtimer_callback_running_relaxed() as
+		 * hrtimer_try_to_cancel_relaxed() ultimately invokes
+		 * hrtimer_callback_running_relaxed().
+		 */
+		cpu_read_relax();
 	}
 }
 EXPORT_SYMBOL_GPL(hrtimer_cancel);
@@ -1702,7 +1729,7 @@ static void migrate_hrtimer_list(struct hrtimer_clock_base *old_base,
 
 	while ((node = timerqueue_getnext(&old_base->active))) {
 		timer = container_of(node, struct hrtimer, node);
-		BUG_ON(hrtimer_callback_running(timer));
+		BUG_ON(hrtimer_callback_running_relaxed(timer));
 		debug_deactivate(timer);
 
 		/*

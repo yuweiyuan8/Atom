@@ -1,3 +1,7 @@
+/*
+ *  Copyright (c) 2014, NVIDIA CORPORATION. All rights reserved.
+ */
+
 #ifndef _ASM_X86_PROCESSOR_H
 #define _ASM_X86_PROCESSOR_H
 
@@ -984,5 +988,7 @@ bool xen_set_default_idle(void);
 #endif
 
 void stop_this_cpu(void *dummy);
+
+#include <asm-generic/processor.h>
 
 #endif /* _ASM_X86_PROCESSOR_H */
